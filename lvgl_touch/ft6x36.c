@@ -27,6 +27,8 @@
 #include "ft6x36.h"
 #include "lvgl_i2c/i2c_manager.h"
 
+#include "esp_log.h"
+
 #define TAG "FT6X36"
 #define FT6X36_TOUCH_QUEUE_ELEMENTS 1
 
@@ -51,13 +53,13 @@ static esp_err_t ft6x06_i2c_read8(uint8_t slave_addr, uint8_t register_addr, uin
   */
 uint8_t ft6x36_get_gesture_id() {
     if (!ft6x36_status.inited) {
-        LV_LOG_ERROR("Init first!");
+        ESP_LOGE(__FUNCTION__, "Init first!");
         return 0x00;
     }
     uint8_t data_buf;
     esp_err_t ret;
     if ((ret = ft6x06_i2c_read8(current_dev_addr, FT6X36_GEST_ID_REG, &data_buf) != ESP_OK))
-        LV_LOG_ERROR("Error reading from device: %s", esp_err_to_name(ret));
+        ESP_LOGE(__FUNCTION__, "Error reading from device: %s", esp_err_to_name(ret));
     return data_buf;
 }
 
@@ -70,31 +72,43 @@ void ft6x06_init(uint16_t dev_addr) {
 
     ft6x36_status.inited = true;
     current_dev_addr = dev_addr;
-    uint8_t data_buf;
+    uint8_t data_buf = 0;
     esp_err_t ret;
-    LV_LOG_INFO("Found touch panel controller");
+    ESP_LOGE(__FUNCTION__, "Preparing touch panel controller");
+    lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_CTRL_KEEP_ACTIVE_MODE, &data_buf, 1);
+
     if ((ret = ft6x06_i2c_read8(dev_addr, FT6X36_PANEL_ID_REG, &data_buf) != ESP_OK))
-        LV_LOG_ERROR("Error reading from device: %s",
+        ESP_LOGE(__FUNCTION__, "Error reading from device: %s",
                  esp_err_to_name(ret));    // Only show error the first time
-    LV_LOG_INFO("\tDevice ID: 0x%02x", data_buf);
+    ESP_LOGE(__FUNCTION__, "\tDevice ID: 0x%02x", data_buf);
 
     ft6x06_i2c_read8(dev_addr, FT6X36_CHIPSELECT_REG, &data_buf);
-    LV_LOG_INFO("\tChip ID: 0x%02x", data_buf);
+    ESP_LOGE(__FUNCTION__, "\tChip ID: 0x%02x", data_buf);
 
     ft6x06_i2c_read8(dev_addr, FT6X36_DEV_MODE_REG, &data_buf);
-    LV_LOG_INFO("\tDevice mode: 0x%02x", data_buf);
+    ESP_LOGE(__FUNCTION__, "\tDevice mode: 0x%02x", data_buf);
 
     ft6x06_i2c_read8(dev_addr, FT6X36_FIRMWARE_ID_REG, &data_buf);
-    LV_LOG_INFO("\tFirmware ID: 0x%02x", data_buf);
+    ESP_LOGE(__FUNCTION__, "\tFirmware ID: 0x%02x", data_buf);
 
     ft6x06_i2c_read8(dev_addr, FT6X36_RELEASECODE_REG, &data_buf);
-    LV_LOG_INFO("\tRelease code: 0x%02x", data_buf);
+    ESP_LOGE(__FUNCTION__, "\tRelease code: 0x%02x", data_buf);
+
+// Setup touch detection threshold
+//data_buf = 128;
+//lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_TH_GROUP_REG, &data_buf, 1);
+
+// Setup interrupt mode
+data_buf = 0;
+lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_INTMODE_REG, &data_buf, 1);
+
+
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
     ft6x36_touch_queue_handle = xQueueCreate( FT6X36_TOUCH_QUEUE_ELEMENTS, sizeof( ft6x36_touch_t ) );
     if( ft6x36_touch_queue_handle == NULL )
     {
-        LV_LOG_ERROR("\tError creating touch input FreeRTOS queue" );
+        ESP_LOGE(__FUNCTION__, "\tError creating touch input FreeRTOS queue" );
         return;
     }
     xQueueSend( ft6x36_touch_queue_handle, &touch_inputs, 0 );
@@ -109,18 +123,30 @@ void ft6x06_init(uint16_t dev_addr) {
   */
 bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     if (!ft6x36_status.inited) {
-        LV_LOG_ERROR("Init first!");
+        ESP_LOGE(__FUNCTION__, "Init first!");
         return 0x00;
     }
-    uint8_t data_buf[5];        // 1 byte status, 2 bytes X, 2 bytes Y
+    uint8_t data_buf[7+6];        // 1 byte status, 2 bytes X, 2 bytes Y, 1 byte weight of first touch, 1 byte weight, 1 byte area, 6 bytes for touch point 2
 
-    esp_err_t ret = lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_TD_STAT_REG, &data_buf[0], 5);
+    {
+        data_buf[0] = 0;
+        if (gpio_get_level(GPIO_NUM_46) == 0) {
+            //DEBUG: ESP_LOGW(__FUNCTION__, "TOUCH IRQ was 0");
+        } else {
+            return false;
+        }
+    }
+    esp_err_t ret = lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_TD_STAT_REG, &data_buf[0], 13);
     if (ret != ESP_OK) {
-        LV_LOG_ERROR("Error talking to touch IC: %s", esp_err_to_name(ret));
+        ESP_LOGE(__FUNCTION__, "Error talking to touch IC: %s", esp_err_to_name(ret));
     }
     uint8_t touch_pnt_cnt = data_buf[0];  // Number of detected touch points
 
-    if (ret != ESP_OK || touch_pnt_cnt != 1) {    // ignore no touch & multi touch
+{
+    uint8_t getting_tired = 0;
+    lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_INTMODE_REG, &getting_tired, 1);
+}
+    if (ret != ESP_OK || touch_pnt_cnt == 0) {    // ignore no touch & multi touch
         if ( touch_inputs.current_state != LV_INDEV_STATE_REL)
         {
             touch_inputs.current_state = LV_INDEV_STATE_REL;
@@ -131,6 +157,7 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         data->point.x = touch_inputs.last_x;
         data->point.y = touch_inputs.last_y;
         data->state = touch_inputs.current_state;
+        ESP_LOGE(__FUNCTION__, "Touch points %d", touch_pnt_cnt);
         return false;
     }
 
@@ -152,7 +179,8 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     data->point.x = touch_inputs.last_x;
     data->point.y = touch_inputs.last_y;
     data->state = touch_inputs.current_state;
-    LV_LOG_INFO("X=%u Y=%u", data->point.x, data->point.y);
+    //TODO: RREMOVE Debug: 
+    printf("P=%d, X=%u Y=%u W=%d,%d; X2=%u Y2=%u W2=%d;\n", data_buf[0], data->point.x, data->point.y, data_buf[5], data_buf[6], ((data_buf[7] & FT6X36_MSB_MASK) << 8) | (data_buf[8] & FT6X36_LSB_MASK), ((data_buf[9] & FT6X36_MSB_MASK) << 8) | (data_buf[10] & FT6X36_LSB_MASK), data_buf[11]);
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
     xQueueOverwrite( ft6x36_touch_queue_handle, &touch_inputs );

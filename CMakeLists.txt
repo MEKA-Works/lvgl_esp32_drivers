@@ -17,21 +17,7 @@ list(APPEND SOURCES "${LV_PORT_PATH}/lv_port_display_espressif.c")
     list(APPEND SOURCES "lvgl_tft/ili9481.c")
     list(APPEND SOURCES "lvgl_tft/ili9486.c")
     list(APPEND SOURCES "lvgl_tft/ili9488.c")
-    list(APPEND SOURCES "lvgl_tft/st7789.c")
-    list(APPEND SOURCES "lvgl_tft/st7735s.c")
-    list(APPEND SOURCES "lvgl_tft/st7796s.c")
-    list(APPEND SOURCES "lvgl_tft/hx8357.c")
-    list(APPEND SOURCES "lvgl_tft/sh1107.c")
-    list(APPEND SOURCES "lvgl_tft/ssd1306.c")
-    list(APPEND SOURCES "lvgl_tft/EVE_commands.c")
-    list(APPEND SOURCES "lvgl_tft/FT81x.c")
-    list(APPEND SOURCES "lvgl_tft/il3820.c")
-    list(APPEND SOURCES "lvgl_tft/jd79653a.c")
-    list(APPEND SOURCES "lvgl_tft/uc8151d.c")
-    list(APPEND SOURCES "lvgl_tft/ra8875.c")
-    list(APPEND SOURCES "lvgl_tft/GC9A01.c")
-    list(APPEND SOURCES "lvgl_tft/ili9163c.c")
-    list(APPEND SOURCES "lvgl_tft/pcd8544.c")
+
 
 if(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI)
     list(APPEND SOURCES "lv_port/disp_spi.c")
@@ -73,7 +59,7 @@ list(APPEND LVGL_INCLUDE_DIRS lv_port)
 
 idf_component_register(SRCS ${SOURCES}
                        INCLUDE_DIRS ${LVGL_INCLUDE_DIRS}
-                       REQUIRES lvgl)
+                       REQUIRES lvgl esp_lcd)
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_LVGL_H_INCLUDE_SIMPLE")
 
