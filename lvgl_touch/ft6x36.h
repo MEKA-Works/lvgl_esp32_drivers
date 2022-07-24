@@ -137,7 +137,7 @@ extern "C" {
 #define FT6X36_LIB_VER_L_REG            0xA2        /* Low 8-bit of LIB Version info */
 
 #define FT6X36_CHIPSELECT_REG            0xA3       /* 0x36 for ft6236; 0x06 for ft6206 */
-
+#define FT6X36_INTMODE_REG 0xA4
 #define FT6X36_POWER_MODE_REG            0xA5
 #define FT6X36_FIRMWARE_ID_REG           0xA6
 #define FT6X36_RELEASECODE_REG           0xAF
