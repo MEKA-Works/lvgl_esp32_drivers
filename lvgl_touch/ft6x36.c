@@ -37,6 +37,7 @@ static ft6x36_status_t ft6x36_status;
 static uint8_t current_dev_addr;
 /* -1 coordinates to designate it was never touched */
 static ft6x36_touch_t touch_inputs = { -1, -1, LV_INDEV_STATE_REL };
+static ft6x36_touch_t touch_inputs_previous = { -1, -1, LV_INDEV_STATE_REL };
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
 QueueHandle_t ft6x36_touch_queue_handle;
@@ -95,14 +96,12 @@ void ft6x06_init(uint16_t dev_addr) {
     ESP_LOGE(__FUNCTION__, "\tRelease code: 0x%02x", data_buf);
 
 // Setup touch detection threshold
-//data_buf = 128;
-//lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_TH_GROUP_REG, &data_buf, 1);
+data_buf = 32;
+lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_TH_GROUP_REG, &data_buf, 1);
 
 // Setup interrupt mode
 data_buf = 0;
 lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, dev_addr, FT6X36_INTMODE_REG, &data_buf, 1);
-
-
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
     ft6x36_touch_queue_handle = xQueueCreate( FT6X36_TOUCH_QUEUE_ELEMENTS, sizeof( ft6x36_touch_t ) );
@@ -126,27 +125,26 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         ESP_LOGE(__FUNCTION__, "Init first!");
         return 0x00;
     }
-    uint8_t data_buf[7+6];        // 1 byte status, 2 bytes X, 2 bytes Y, 1 byte weight of first touch, 1 byte weight, 1 byte area, 6 bytes for touch point 2
+    uint8_t data_buf[5];        // 1 byte status, 2 bytes X, 2 bytes Y
 
-    {
-        data_buf[0] = 0;
-        if (gpio_get_level(GPIO_NUM_46) == 0) {
-            //DEBUG: ESP_LOGW(__FUNCTION__, "TOUCH IRQ was 0");
-        } else {
-            return false;
-        }
+    // Skip I2C communication if Touch IRQ is not active
+    if (gpio_get_level(GPIO_NUM_46) == 1) {
+        touch_inputs.current_state = LV_INDEV_STATE_REL;
+        data->point.x = touch_inputs.last_x;
+        data->point.y = touch_inputs.last_y;
+        data->state = touch_inputs.current_state;
+        return false;
+    } else {
+        //DEBUG: ESP_LOGW(__FUNCTION__, "TOUCH IRQ was 0 (Active)");
     }
-    esp_err_t ret = lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_TD_STAT_REG, &data_buf[0], 13);
+
+    esp_err_t ret = lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_TD_STAT_REG, &data_buf[0], 5);
     if (ret != ESP_OK) {
         ESP_LOGE(__FUNCTION__, "Error talking to touch IC: %s", esp_err_to_name(ret));
     }
     uint8_t touch_pnt_cnt = data_buf[0];  // Number of detected touch points
 
-{
-    uint8_t getting_tired = 0;
-    lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, current_dev_addr, FT6X36_INTMODE_REG, &getting_tired, 1);
-}
-    if (ret != ESP_OK || touch_pnt_cnt == 0) {    // ignore no touch & multi touch
+    if (ret != ESP_OK || touch_pnt_cnt != 1) {    // ignore no touch & multi touch
         if ( touch_inputs.current_state != LV_INDEV_STATE_REL)
         {
             touch_inputs.current_state = LV_INDEV_STATE_REL;
@@ -161,7 +159,7 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         return false;
     }
 
-    touch_inputs.current_state = LV_INDEV_STATE_PR;
+    // Compute touch input coordinates
     touch_inputs.last_x = ((data_buf[1] & FT6X36_MSB_MASK) << 8) | (data_buf[2] & FT6X36_LSB_MASK);
     touch_inputs.last_y = ((data_buf[3] & FT6X36_MSB_MASK) << 8) | (data_buf[4] & FT6X36_LSB_MASK);
 
@@ -176,15 +174,27 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 #if CONFIG_LV_FT6X36_INVERT_Y
     touch_inputs.last_y = LV_VER_RES - touch_inputs.last_y;
 #endif
-    data->point.x = touch_inputs.last_x;
-    data->point.y = touch_inputs.last_y;
-    data->state = touch_inputs.current_state;
-    //TODO: RREMOVE Debug: 
-    printf("P=%d, X=%u Y=%u W=%d,%d; X2=%u Y2=%u W2=%d;\n", data_buf[0], data->point.x, data->point.y, data_buf[5], data_buf[6], ((data_buf[7] & FT6X36_MSB_MASK) << 8) | (data_buf[8] & FT6X36_LSB_MASK), ((data_buf[9] & FT6X36_MSB_MASK) << 8) | (data_buf[10] & FT6X36_LSB_MASK), data_buf[11]);
+
+    // If the coordinates have moved since the last data point, update the current state
+    if (
+        touch_inputs.current_state == LV_INDEV_STATE_REL ||
+        (touch_inputs.last_x != touch_inputs_previous.last_x || touch_inputs.last_y != touch_inputs_previous.last_y)
+        ) {
+        touch_inputs.current_state = LV_INDEV_STATE_PR;
+        data->point.x = touch_inputs.last_x;
+        data->point.y = touch_inputs.last_y;
+        data->state = touch_inputs.current_state;
+
+        touch_inputs_previous.last_x = touch_inputs.last_x;
+        touch_inputs_previous.last_y = touch_inputs.last_y;
+
+        //TODO: RREMOVE Debug: 
+        ESP_LOGW(__FUNCTION__, "Touch P=%d, X=%u Y=%u;", data_buf[0], data->point.x, data->point.y);
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
     xQueueOverwrite( ft6x36_touch_queue_handle, &touch_inputs );
 #endif
+    }
 
     return false;
 }
