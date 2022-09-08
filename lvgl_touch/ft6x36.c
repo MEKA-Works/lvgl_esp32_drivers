@@ -37,7 +37,6 @@ static ft6x36_status_t ft6x36_status;
 static uint8_t current_dev_addr;
 /* -1 coordinates to designate it was never touched */
 static ft6x36_touch_t touch_inputs = { -1, -1, LV_INDEV_STATE_REL };
-static ft6x36_touch_t touch_inputs_previous = { -1, -1, LV_INDEV_STATE_REL };
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
 QueueHandle_t ft6x36_touch_queue_handle;
@@ -155,7 +154,7 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         data->point.x = touch_inputs.last_x;
         data->point.y = touch_inputs.last_y;
         data->state = touch_inputs.current_state;
-        ESP_LOGE(__FUNCTION__, "Touch points %d", touch_pnt_cnt);
+
         return false;
     }
 
@@ -175,26 +174,15 @@ bool ft6x36_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     touch_inputs.last_y = LV_VER_RES - touch_inputs.last_y;
 #endif
 
-    // If the coordinates have moved since the last data point, update the current state
-    if (
-        touch_inputs.current_state == LV_INDEV_STATE_REL ||
-        (touch_inputs.last_x != touch_inputs_previous.last_x || touch_inputs.last_y != touch_inputs_previous.last_y)
-        ) {
-        touch_inputs.current_state = LV_INDEV_STATE_PR;
-        data->point.x = touch_inputs.last_x;
-        data->point.y = touch_inputs.last_y;
-        data->state = touch_inputs.current_state;
-
-        touch_inputs_previous.last_x = touch_inputs.last_x;
-        touch_inputs_previous.last_y = touch_inputs.last_y;
-
-        //TODO: RREMOVE Debug: 
-        ESP_LOGW(__FUNCTION__, "Touch P=%d, X=%u Y=%u;", data_buf[0], data->point.x, data->point.y);
+    touch_inputs.current_state = LV_INDEV_STATE_PR;
+    data->point.x = touch_inputs.last_x;
+    data->point.y = touch_inputs.last_y;
+    data->state = touch_inputs.current_state;
 
 #if CONFIG_LV_FT6X36_COORDINATES_QUEUE
     xQueueOverwrite( ft6x36_touch_queue_handle, &touch_inputs );
 #endif
-    }
+
 
     return false;
 }
